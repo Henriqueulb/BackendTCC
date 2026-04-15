@@ -29,7 +29,9 @@ data class CadastroUsuarioDTO(
     val nome: String,
     val email: String,
     val senha: String,
-    val telefone: String
+    val telefone: String,
+    val isAcompanhante: Boolean = false,
+    val codigoConvite: String? = null
 )
 
 @Serializable
@@ -119,6 +121,19 @@ data class NotificacaoConfigDTO(
     val som: Boolean
 )
 
+@Serializable
+data class CodigoConviteDTO(
+    val codigo: String
+)
+
+@Serializable
+data class AcompanhanteDTO(
+    val idVinculo: Int,
+    val nomeAcompanhante: String,
+    val emailAcompanhante: String,
+    val status: String
+)
+
 // SERVIDOR
 
 fun main() {
@@ -202,6 +217,21 @@ fun Application.configureRouting() {
                         it[email] = emailT
                         it[senha] = dados.senha
                         it[telefone] = dados.telefone
+                        it[isAcompanhante] = dados.isAcompanhante
+                    }
+
+                    if (dados.isAcompanhante && !dados.codigoConvite.isNullOrBlank()) {
+                        val linhasAtualizadas = Acompanhantes.update({
+                            (Acompanhantes.codigoConvite eq dados.codigoConvite) and
+                                    (Acompanhantes.status eq "PENDENTE")
+                        }) {
+                            it[usuarioAcompanhanteEmail] = emailT
+                            it[status] = "ATIVO"
+                        }
+
+                        if (linhasAtualizadas == 0) {
+                            throw IllegalArgumentException("Código de convite inválido ou expirado")
+                        }
                     }
                 }
                 call.respond(HttpStatusCode.Created, RespostaDTO("Criado", true))
@@ -601,6 +631,95 @@ fun Application.configureRouting() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao salvar", false))
+            }
+        }
+
+        get("/acompanhantes/codigo") {
+            val email = call.request.queryParameters["email"]?.trim()?.lowercase()
+            if (email == null) {
+                call.respond(HttpStatusCode.BadRequest, RespostaDTO("Email obrigatório", false))
+                return@get
+            }
+
+            try {
+                val codigoDTO = transaction {
+                    val existente = Acompanhantes.select {
+                        (Acompanhantes.usuarioPacienteEmail eq email) and
+                                (Acompanhantes.status eq "PENDENTE") and
+                                (Acompanhantes.dataExpiracao greaterEq LocalDateTime.now())
+                    }.firstOrNull()
+
+                    if (existente != null) {
+                        CodigoConviteDTO(existente[Acompanhantes.codigoConvite])
+                    } else {
+                        // gera um novo codigo de 6 caracteres (letras e números)
+                        val charPool = ('A'..'Z') + ('0'..'9')
+                        val novoCodigo = (1..6)
+                            .map { kotlin.random.Random.nextInt(0, charPool.size) }
+                            .map(charPool::get)
+                            .joinToString("")
+
+                        Acompanhantes.insert {
+                            it[usuarioPacienteEmail] = email
+                            it[codigoConvite] = novoCodigo
+                            // Define expiracao para 7 dias
+                            it[dataExpiracao] = LocalDateTime.now().plusDays(7)
+                            it[status] = "PENDENTE"
+                        }
+                        CodigoConviteDTO(novoCodigo)
+                    }
+                }
+                call.respond(HttpStatusCode.OK, codigoDTO)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao gerar código", false))
+            }
+        }
+
+        get("/acompanhantes") {
+            val email = call.request.queryParameters["email"]?.trim()?.lowercase()
+            if (email == null) {
+                call.respond(HttpStatusCode.BadRequest, emptyList<AcompanhanteDTO>())
+                return@get
+            }
+
+            try {
+                val lista = transaction {
+                    Acompanhantes.join(Usuarios, JoinType.INNER, additionalConstraint = { Acompanhantes.usuarioAcompanhanteEmail eq Usuarios.email })
+                        .select {
+                            (Acompanhantes.usuarioPacienteEmail eq email) and
+                                    (Acompanhantes.status eq "ATIVO")
+                        }
+                        .map {
+                            AcompanhanteDTO(
+                                idVinculo = it[Acompanhantes.idVinculo],
+                                nomeAcompanhante = it[Usuarios.nome] ?: "Desconhecido",
+                                emailAcompanhante = it[Usuarios.email],
+                                status = it[Acompanhantes.status]
+                            )
+                        }
+                }
+                call.respond(HttpStatusCode.OK, lista)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, emptyList<AcompanhanteDTO>())
+            }
+        }
+
+        delete("/acompanhantes/{id}") {
+            val id = call.parameters["id"]?.toIntOrNull()
+            if (id == null) {
+                call.respond(HttpStatusCode.BadRequest, RespostaDTO("ID inválido", false))
+                return@delete
+            }
+            try {
+                transaction {
+                    Acompanhantes.deleteWhere { Acompanhantes.idVinculo eq id }
+                }
+                call.respond(HttpStatusCode.OK, RespostaDTO("Acesso revogado", true))
+            } catch(e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao revogar acesso", false))
             }
         }
     }
