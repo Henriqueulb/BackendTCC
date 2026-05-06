@@ -1,5 +1,6 @@
 package com.exemplo.medico.database
 
+import org.jetbrains.exposed.sql.ReferenceOption
 import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.javatime.date
 import org.jetbrains.exposed.sql.javatime.datetime
@@ -37,6 +38,7 @@ object RotinasCuidados : Table("rotina_cuidado") {
     val dataInicio = date("data_inicio")
     val dataFim = date("data_fim").nullable()
     val status = varchar("status", 20).default("ATIVO")
+    val dataCriacao = datetime("data_criacao").defaultExpression(CurrentDateTime)
 
     override val primaryKey = PrimaryKey(idRotina)
 }
@@ -44,7 +46,7 @@ object RotinasCuidados : Table("rotina_cuidado") {
 // tabela item cuidado
 object ItensCuidado : Table("item_cuidado") {
     val idItem = integer("id_item").autoIncrement()
-    val idRotina = integer("id_rotina") references RotinasCuidados.idRotina
+    val idRotina = integer("id_rotina").references(RotinasCuidados.idRotina, onDelete = ReferenceOption.CASCADE)
     val nomeCuidado = varchar("nome_cuidado", 100)
     val medicacao = varchar("medicacao", 100).nullable()
     val dose = varchar("dose", 50).nullable()
