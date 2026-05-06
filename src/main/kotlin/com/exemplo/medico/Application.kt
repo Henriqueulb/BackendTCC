@@ -48,21 +48,35 @@ data class RespostaDTO(
 )
 
 @Serializable
-data class NovaRotinaDTO(
-    val emailUsuario: String,
-    val titulo: String,
-    val horario: String,
-    val dose: String?,
-    val descricao: String?
-)
-
-@Serializable
 data class ItemRotinaDTO(
     val id: Int,
     val titulo: String,
     val horario: String,
     val dose: String?,
     val feita: Boolean
+)
+
+@Serializable
+data class NovoItemRotinaDTO(
+    val idRotina: Int,
+    val titulo: String,
+    val horario: String,
+    val dose: String?,
+    val descricao: String? = null
+)
+
+@Serializable
+data class RotinaResumoDTO(
+    val idRotina: Int,
+    val nomeRotina: String,
+    val dataCriacao: String,
+    val status: String
+)
+
+@Serializable
+data class CriarRotinaDTO(
+    val emailUsuario: String,
+    val nomeRotina: String
 )
 
 @Serializable
@@ -298,33 +312,67 @@ fun Application.configureRouting() {
         }
 
         // CRIAR ROTINA
-        post("/rotina") {
+        get("/rotinas/{id}/itens") {
+            val id = call.parameters["id"]?.toIntOrNull()
+            if (id == null) {
+                call.respond(HttpStatusCode.BadRequest, emptyList<ItemRotinaDTO>())
+                return@get
+            }
             try {
-                val d = call.receive<NovaRotinaDTO>()
-
-                transaction<Unit> {
-                    var idPai = RotinasCuidados.select {
-                        (RotinasCuidados.usuarioEmail eq d.emailUsuario) and (RotinasCuidados.status eq "ATIVO")
-                    }.firstOrNull()?.get(RotinasCuidados.idRotina)
-
-                    if (idPai == null) {
-                        idPai = RotinasCuidados.insert {
-                            it[usuarioEmail] = d.emailUsuario
-                            it[nomeRotina] = "Rotina"
-                            it[dataInicio] = LocalDate.now()
-                            it[status] = "ATIVO"
-                        } get RotinasCuidados.idRotina
+                val itens = transaction {
+                    ItensCuidado.select { ItensCuidado.idRotina eq id }.map {
+                        ItemRotinaDTO(
+                            id = it[ItensCuidado.idItem],
+                            titulo = it[ItensCuidado.nomeCuidado],
+                            horario = it[ItensCuidado.frequenciaHorario],
+                            dose = it[ItensCuidado.dose],
+                            feita = false
+                        )
                     }
+                }
+                call.respond(HttpStatusCode.OK, itens)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, emptyList<ItemRotinaDTO>())
+            }
+        }
+
+        // ADICIONAR UM ITEM DENTRO DE UMA ROTINA
+        post("/rotinas/itens") {
+            try {
+                val d = call.receive<NovoItemRotinaDTO>()
+                transaction {
                     ItensCuidado.insert {
-                        it[idRotina] = idPai!!
+                        it[idRotina] = d.idRotina
                         it[nomeCuidado] = d.titulo
                         it[frequenciaHorario] = d.horario
                         it[dose] = d.dose
                         it[medicacao] = d.descricao
                     }
                 }
-                call.respond(HttpStatusCode.Created, RespostaDTO("Salvo", true))
+                call.respond(HttpStatusCode.Created, RespostaDTO("Item salvo", true))
             } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro: ${e.message}", false))
+            }
+        }
+
+        // MARCAR ROTINA INTEIRA COMO CONCLUÍDA
+        put("/rotinas/{id}/concluir") {
+            val id = call.parameters["id"]?.toIntOrNull()
+            if (id == null) {
+                call.respond(HttpStatusCode.BadRequest, RespostaDTO("ID inválido", false))
+                return@put
+            }
+            try {
+                transaction {
+                    RotinasCuidados.update({ RotinasCuidados.idRotina eq id }) {
+                        it[status] = "CONCLUIDA"
+                    }
+                }
+                call.respond(HttpStatusCode.OK, RespostaDTO("Rotina concluída", true))
+            } catch (e: Exception) {
+                e.printStackTrace()
                 call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro", false))
             }
         }
@@ -722,5 +770,44 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao revogar acesso", false))
             }
         }
+
+        get("/rotinas") {
+            val email = call.request.queryParameters["email"]?.trim()?.lowercase() ?: return@get
+            try {
+                val rotinas = transaction {
+                    RotinasCuidados.select { RotinasCuidados.usuarioEmail eq email }
+                        .orderBy(RotinasCuidados.dataCriacao to SortOrder.DESC)
+                        .map {
+                            RotinaResumoDTO(
+                                idRotina = it[RotinasCuidados.idRotina],
+                                nomeRotina = it[RotinasCuidados.nomeRotina],
+                                dataCriacao = it[RotinasCuidados.dataCriacao].toString().split("T")[0],
+                                status = it[RotinasCuidados.status]
+                            )
+                        }
+                }
+                call.respond(HttpStatusCode.OK, rotinas)
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, emptyList<RotinaResumoDTO>())
+            }
+        }
+
+        post("/rotinas") {
+            try {
+                val dto = call.receive<CriarRotinaDTO>()
+                transaction {
+                    RotinasCuidados.insert {
+                        it[usuarioEmail] = dto.emailUsuario
+                        it[nomeRotina] = dto.nomeRotina
+                        it[dataInicio] = LocalDate.now()
+                        it[status] = "ATIVO"
+                    }
+                }
+                call.respond(HttpStatusCode.Created, RespostaDTO("Rotina criada", true))
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro", false))
+            }
+        }
+
     }
 }
