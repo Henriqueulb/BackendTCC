@@ -809,5 +809,47 @@ fun Application.configureRouting() {
             }
         }
 
+        post("/rotinas/{id}/reutilizar") {
+            val idOriginal = call.parameters["id"]?.toIntOrNull()
+            if (idOriginal == null) {
+                call.respond(HttpStatusCode.BadRequest, RespostaDTO("ID inválido", false))
+                return@post
+            }
+
+            try {
+                transaction {
+                    // 1 Busca a rotina original
+                    val rotinaOriginal = RotinasCuidados.select { RotinasCuidados.idRotina eq idOriginal }.singleOrNull()
+                        ?: throw Exception("Rotina original não encontrada")
+
+                    // 2 Cria a nova rotina baseada na antiga
+                    val novoIdRotina = RotinasCuidados.insert {
+                        it[usuarioEmail] = rotinaOriginal[usuarioEmail]
+                        it[nomeRotina] = rotinaOriginal[nomeRotina]
+                        it[dataInicio] = java.time.LocalDate.now()
+                        it[status] = "ATIVO"
+                    } get RotinasCuidados.idRotina
+
+                    // 3 Busca todos os itens da rotina antiga
+                    val itensAntigos = ItensCuidado.select { ItensCuidado.idRotina eq idOriginal }
+
+                    // 4 Copia os itens para a nova rotina
+                    for (item in itensAntigos) {
+                        ItensCuidado.insert {
+                            it[idRotina] = novoIdRotina // Aponta para a NOVA pasta
+                            it[nomeCuidado] = item[nomeCuidado]
+                            it[frequenciaHorario] = item[frequenciaHorario]
+                            it[dose] = item[dose]
+                            it[medicacao] = item[medicacao]
+                        }
+                    }
+                }
+                call.respond(HttpStatusCode.Created, RespostaDTO("Rotina reutilizada com sucesso", true))
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao reutilizar", false))
+            }
+        }
+
     }
 }
