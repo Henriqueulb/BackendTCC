@@ -30,8 +30,13 @@ data class CadastroUsuarioDTO(
     val email: String,
     val senha: String,
     val telefone: String,
-    val isAcompanhante: Boolean = false,
-    val codigoConvite: String? = null
+    val isAcompanhante: Boolean = false
+)
+
+@Serializable
+data class VincularAcompanhanteDTO(
+    val emailAcompanhante: String,
+    val codigoConvite: String
 )
 
 @Serializable
@@ -104,7 +109,8 @@ data class NovoSintomaDTO(
 data class PerfilUsuarioDTO(
     val nome: String,
     val email: String,
-    val telefone: String
+    val telefone: String,
+    val isAcompanhante: Boolean = false
 )
 
 @Serializable
@@ -146,6 +152,13 @@ data class AcompanhanteDTO(
     val nomeAcompanhante: String,
     val emailAcompanhante: String,
     val status: String
+)
+
+@Serializable
+data class PacienteVinculadoDTO(
+    val idVinculo: Int,
+    val nomePaciente: String,
+    val emailPaciente: String
 )
 
 // SERVIDOR
@@ -232,20 +245,6 @@ fun Application.configureRouting() {
                         it[senha] = dados.senha
                         it[telefone] = dados.telefone
                         it[isAcompanhante] = dados.isAcompanhante
-                    }
-
-                    if (dados.isAcompanhante && !dados.codigoConvite.isNullOrBlank()) {
-                        val linhasAtualizadas = Acompanhantes.update({
-                            (Acompanhantes.codigoConvite eq dados.codigoConvite) and
-                                    (Acompanhantes.status eq "PENDENTE")
-                        }) {
-                            it[usuarioAcompanhanteEmail] = emailT
-                            it[status] = "ATIVO"
-                        }
-
-                        if (linhasAtualizadas == 0) {
-                            throw IllegalArgumentException("Código de convite inválido ou expirado")
-                        }
                     }
                 }
                 call.respond(HttpStatusCode.Created, RespostaDTO("Criado", true))
@@ -470,7 +469,8 @@ fun Application.configureRouting() {
                             PerfilUsuarioDTO(
                                 nome = it[Usuarios.nome] ?: "",
                                 email = it[Usuarios.email],
-                                telefone = it[Usuarios.telefone] ?: ""
+                                telefone = it[Usuarios.telefone] ?: "",
+                                isAcompanhante = it[Usuarios.isAcompanhante]
                             )
                         }
                         .singleOrNull()
@@ -848,6 +848,58 @@ fun Application.configureRouting() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao reutilizar", false))
+            }
+        }
+
+        post("/acompanhantes/vincular") {
+            try {
+                val dto = call.receive<VincularAcompanhanteDTO>()
+                transaction {
+                    val linhasAtualizadas = Acompanhantes.update({
+                        (Acompanhantes.codigoConvite eq dto.codigoConvite) and
+                                (Acompanhantes.status eq "PENDENTE")
+                    }) {
+                        it[usuarioAcompanhanteEmail] = dto.emailAcompanhante
+                        it[status] = "ATIVO"
+                    }
+
+                    if (linhasAtualizadas == 0) {
+                        throw IllegalArgumentException("Código inválido ou já utilizado")
+                    }
+                }
+                call.respond(HttpStatusCode.OK, RespostaDTO("Vinculado com sucesso", true))
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.BadRequest, RespostaDTO(e.message ?: "Erro", false))
+            }
+        }
+
+        get("/acompanhantes/meus-pacientes/{email}") {
+            val emailBusca = call.parameters["email"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+
+            try {
+                val pacientes = transaction {
+                    // Faz o Join explícito: Acompanhantes.usuario_paciente_email = Usuarios.email
+                    Acompanhantes.join(
+                        otherTable = Usuarios,
+                        joinType = org.jetbrains.exposed.sql.JoinType.INNER,
+                        onColumn = Acompanhantes.usuarioPacienteEmail,
+                        otherColumn = Usuarios.email
+                    )
+                        .select {
+                            (Acompanhantes.usuarioAcompanhanteEmail eq emailBusca) and
+                                    (Acompanhantes.status eq "ATIVO")
+                        }
+                        .map {
+                            PacienteVinculadoDTO(
+                                idVinculo = it[Acompanhantes.idVinculo],
+                                nomePaciente = it[Usuarios.nome] ?: "Desconhecido",
+                                emailPaciente = it[Usuarios.email]
+                            )
+                        }
+                }
+                call.respond(HttpStatusCode.OK, pacientes)
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, mapOf("erro" to (e.message ?: "Erro ao buscar pacientes")))
             }
         }
 
