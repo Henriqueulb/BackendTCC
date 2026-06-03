@@ -49,7 +49,8 @@ data class LoginUsuarioDTO(
 data class RespostaDTO(
     val mensagem: String,
     val sucesso: Boolean,
-    val nomeUsuario: String? = null
+    val nomeUsuario: String? = null,
+    val isAcompanhante: Boolean = false
 )
 
 @Serializable
