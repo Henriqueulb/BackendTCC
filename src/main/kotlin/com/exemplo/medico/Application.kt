@@ -221,7 +221,9 @@ fun Application.configureRouting() {
 
                 if (usuarioRow != null) {
                     val nome = usuarioRow[Usuarios.nome] ?: "Usuário"
-                    call.respond(HttpStatusCode.OK, RespostaDTO("Sucesso", true, nome))
+
+                    val isAcomp = usuarioRow[Usuarios.isAcompanhante]
+                    call.respond(HttpStatusCode.OK, RespostaDTO("Sucesso", true, nome, isAcomp))
                 } else {
                     call.respond(HttpStatusCode.Unauthorized, RespostaDTO("Login inválido", false))
                 }
