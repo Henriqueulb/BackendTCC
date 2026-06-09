@@ -49,7 +49,8 @@ data class LoginUsuarioDTO(
 data class RespostaDTO(
     val mensagem: String,
     val sucesso: Boolean,
-    val nomeUsuario: String? = null
+    val nomeUsuario: String? = null,
+    val isAcompanhante: Boolean = false
 )
 
 @Serializable
@@ -220,7 +221,9 @@ fun Application.configureRouting() {
 
                 if (usuarioRow != null) {
                     val nome = usuarioRow[Usuarios.nome] ?: "Usuário"
-                    call.respond(HttpStatusCode.OK, RespostaDTO("Sucesso", true, nome))
+
+                    val isAcomp = usuarioRow[Usuarios.isAcompanhante]
+                    call.respond(HttpStatusCode.OK, RespostaDTO("Sucesso", true, nome, isAcomp))
                 } else {
                     call.respond(HttpStatusCode.Unauthorized, RespostaDTO("Login inválido", false))
                 }
@@ -385,33 +388,22 @@ fun Application.configureRouting() {
                     val inicioDia = dataBase.atStartOfDay()
                     val fimDia = dataBase.atTime(23, 59, 59)
 
+                    Aderencias.deleteWhere {
+                        (Aderencias.idItem eq dto.idItem) and
+                                (Aderencias.dataExecucao greaterEq inicioDia) and
+                                (Aderencias.dataExecucao lessEq fimDia)
+                    }
+
                     if (dto.feito) {
-                        // marcar cuidado
                         val doseOrig = ItensCuidado.slice(ItensCuidado.dose)
                             .select { ItensCuidado.idItem eq dto.idItem }
                             .singleOrNull()?.get(ItensCuidado.dose)
 
-                        val jaTem = Aderencias.select {
-                            (Aderencias.idItem eq dto.idItem) and
-                                    (Aderencias.dataExecucao greaterEq inicioDia) and
-                                    (Aderencias.dataExecucao lessEq fimDia)
-                        }.count() > 0
-
-                        if (!jaTem) {
-                            Aderencias.insert {
-                                it[idItem] = dto.idItem
-                                // Grava com a data do celular + hora atual
-                                it[dataExecucao] = LocalDateTime.of(dataBase, LocalTime.now())
-                                it[statusConformidade] = true
-                                it[doseRealizada] = doseOrig
-                            }
-                        }
-                    } else {
-                        // desmarcar
-                        Aderencias.deleteWhere {
-                            (idItem eq dto.idItem) and
-                                    (dataExecucao greaterEq inicioDia) and
-                                    (dataExecucao lessEq fimDia)
+                        Aderencias.insert {
+                            it[idItem] = dto.idItem
+                            it[dataExecucao] = LocalDateTime.of(dataBase, LocalTime.now())
+                            it[statusConformidade] = true
+                            it[doseRealizada] = doseOrig
                         }
                     }
                 }
