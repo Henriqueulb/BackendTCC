@@ -5,6 +5,7 @@ import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.javatime.date
 import org.jetbrains.exposed.sql.javatime.datetime
 import org.jetbrains.exposed.sql.javatime.CurrentDateTime
+import org.jetbrains.exposed.dao.id.IntIdTable
 
 // Tabela Usuario
 object Usuarios : Table("usuario") {
@@ -56,15 +57,21 @@ object ItensCuidado : Table("item_cuidado") {
 }
 
 // Tabela Sintomas
-object Sintomas : Table("sintoma") {
-    val idRegistro = integer("id_registro").autoIncrement()
+
+// Tabela Principal
+object Sintomas : IntIdTable("sintoma", "id_registro") {
     val usuarioEmail = varchar("usuario_email", 255) references Usuarios.email
     val dataRegistro = datetime("data_registro").defaultExpression(CurrentDateTime)
     val valorEvaBemEstar = integer("valor_eva_bem_estar")
     val valorEvaSintomas = integer("valor_eva_sintomas")
     val alertaRisco = bool("alerta_risco").default(false)
+}
 
-    override val primaryKey = PrimaryKey(idRegistro)
+// Tabela de Detalhes
+object DetalheSintomas : IntIdTable("detalhe_sintoma") {
+    val registroSintomaId = reference("registro_sintoma_id", Sintomas)
+    val nomeSintoma = varchar("nome_sintoma", 100)
+    val intensidade = integer("intensidade")
 }
 
 // Tabela aderencia

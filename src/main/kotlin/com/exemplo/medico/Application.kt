@@ -100,10 +100,16 @@ data class StatusRotinaDTO(
 )
 
 @Serializable
+data class DetalheSintomaDTO(
+    val nome: String,
+    val intensidade: Int
+)
+
+@Serializable
 data class NovoSintomaDTO(
     val emailUsuario: String,
     val bemEstar: Int,
-    val sintomas: Int
+    val sintomas: List<DetalheSintomaDTO>
 )
 
 @Serializable
@@ -182,7 +188,7 @@ fun Application.module() {
 fun initDatabase() {
     try {
         val config = HikariConfig().apply {
-            jdbcUrl = "jdbc:postgresql://localhost:5432/postgres"
+            jdbcUrl = "jdbc:postgresql://localhost:5433/postgres"
             driverClassName = "org.postgresql.Driver"
             username = "postgres"
             password = "admin"
@@ -194,7 +200,7 @@ fun initDatabase() {
         Database.connect(dataSource)
 
         transaction {
-            SchemaUtils.create(Usuarios, FichasMedicas, RotinasCuidados, ItensCuidado, Sintomas, Aderencias, Acompanhantes, Notificacoes)
+            SchemaUtils.create(Usuarios, FichasMedicas, RotinasCuidados, ItensCuidado, Sintomas, Aderencias, Acompanhantes, Notificacoes, DetalheSintomas )
         }
         println(">>> BANCO CONECTADO <<<")
     } catch (e: Exception) {
@@ -430,21 +436,35 @@ fun Application.configureRouting() {
         post("/sintomas") {
             try {
                 val dto = call.receive<NovoSintomaDTO>()
-                val riscoCalculado = (dto.sintomas >= 7) || (dto.bemEstar <= 3)
+
+                // 1. Calcula o risco: se QUALQUER sintoma for >= 7 ou bem estar <= 3
+                val temSintomaGrave = dto.sintomas.any { it.intensidade >= 7 }
+                val riscoCalculado = temSintomaGrave || (dto.bemEstar <= 3)
 
                 transaction {
-                    Sintomas.insert {
+                    // 2. Insere na tabela principal (Sintomas)
+                    // Usamos .insertAndGetId para pegar o ID do registro gerado
+                    val idGerado = Sintomas.insertAndGetId {
                         it[usuarioEmail] = dto.emailUsuario
                         it[valorEvaBemEstar] = dto.bemEstar
-                        it[valorEvaSintomas] = dto.sintomas
+                        it[valorEvaSintomas] = dto.sintomas.maxOfOrNull { s -> s.intensidade } ?: 0
                         it[alertaRisco] = riscoCalculado
+                    }
+
+                    // 3. Insere cada item da lista na nova tabela DetalheSintomas
+                    dto.sintomas.forEach { sintoma ->
+                        DetalheSintomas.insert {
+                            it[registroSintomaId] = idGerado.value
+                            it[nomeSintoma] = sintoma.nome
+                            it[intensidade] = sintoma.intensidade
+                        }
                     }
                 }
                 call.respond(HttpStatusCode.Created, RespostaDTO("Sintomas registrados", true))
 
             } catch (e: Exception) {
                 e.printStackTrace()
-                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao salvar", false))
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao salvar: ${e.message}", false))
             }
         }
         get("/perfil") {
