@@ -15,12 +15,19 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import io.ktor.http.invoke
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.select
+
+// import org.jetbrains.exposed.sql.functions.count
+// import org.jetbrains.exposed.sql.SqlExpressionBuilder.count
+
 
 // DTOs
 
@@ -111,7 +118,33 @@ data class NovoSintomaDTO(
     val bemEstar: Int,
     val sintomas: List<DetalheSintomaDTO>
 )
+@Serializable
+data class SintomaFrequenteDTO(
+    val nome: String,
+    val contagem: Int
+)
 
+@Serializable
+data class RelatorioDTO(
+    val mediaBemEstar: Double,
+    val totalRegistros: Int,
+    val sintomasMaisComuns: List<SintomaFrequenteDTO>
+)
+
+@Serializable
+data class PontoEvolucaoDTO(
+    val data: String, // ex: "2026-06-21"
+    val dosesTomadas: Int,
+    val dosesEsquecidas: Int
+)
+
+@Serializable
+data class RelatorioCompletoDTO(
+    val mediaBemEstar: Double,
+    val taxaAdesaoGlobal: Double,
+    val evolucaoTemporal: List<PontoEvolucaoDTO>,
+    val sintomasFrequentes: List<SintomaFrequenteDTO>
+)
 @Serializable
 data class PerfilUsuarioDTO(
     val nome: String,
@@ -299,13 +332,15 @@ fun Application.configureRouting() {
 
                         if (feito) feitos++
 
-                        listaFinal.add(ItemRotinaDTO(
-                            id = id,
-                            titulo = row[ItensCuidado.nomeCuidado],
-                            horario = row[ItensCuidado.frequenciaHorario],
-                            dose = row[ItensCuidado.dose],
-                            feita = feito
-                        ))
+                        listaFinal.add(
+                            ItemRotinaDTO(
+                                id = id,
+                                titulo = row[ItensCuidado.nomeCuidado],
+                                horario = row[ItensCuidado.frequenciaHorario],
+                                dose = row[ItensCuidado.dose],
+                                feita = feito
+                            )
+                        )
                     }
 
                     val progresso = if (total > 0) feitos.toFloat() / total else 0f
@@ -557,7 +592,10 @@ fun Application.configureRouting() {
 
             } catch (e: Exception) {
                 e.printStackTrace()
-                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao deletar conta: ${e.message}", false))
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    RespostaDTO("Erro ao deletar conta: ${e.message}", false)
+                )
             }
         }
 
@@ -745,7 +783,10 @@ fun Application.configureRouting() {
 
             try {
                 val lista = transaction {
-                    Acompanhantes.join(Usuarios, JoinType.INNER, additionalConstraint = { Acompanhantes.usuarioAcompanhanteEmail eq Usuarios.email })
+                    Acompanhantes.join(
+                        Usuarios,
+                        JoinType.INNER,
+                        additionalConstraint = { Acompanhantes.usuarioAcompanhanteEmail eq Usuarios.email })
                         .select {
                             (Acompanhantes.usuarioPacienteEmail eq email) and
                                     (Acompanhantes.status eq "ATIVO")
@@ -777,7 +818,7 @@ fun Application.configureRouting() {
                     Acompanhantes.deleteWhere { Acompanhantes.idVinculo eq id }
                 }
                 call.respond(HttpStatusCode.OK, RespostaDTO("Acesso revogado", true))
-            } catch(e: Exception) {
+            } catch (e: Exception) {
                 e.printStackTrace()
                 call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao revogar acesso", false))
             }
@@ -831,8 +872,9 @@ fun Application.configureRouting() {
             try {
                 transaction {
                     // 1 Busca a rotina original
-                    val rotinaOriginal = RotinasCuidados.select { RotinasCuidados.idRotina eq idOriginal }.singleOrNull()
-                        ?: throw Exception("Rotina original não encontrada")
+                    val rotinaOriginal =
+                        RotinasCuidados.select { RotinasCuidados.idRotina eq idOriginal }.singleOrNull()
+                            ?: throw Exception("Rotina original não encontrada")
 
                     // 2 Cria a nova rotina baseada na antiga
                     val novoIdRotina = RotinasCuidados.insert {
@@ -911,9 +953,77 @@ fun Application.configureRouting() {
                 }
                 call.respond(HttpStatusCode.OK, pacientes)
             } catch (e: Exception) {
-                call.respond(HttpStatusCode.InternalServerError, mapOf("erro" to (e.message ?: "Erro ao buscar pacientes")))
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    mapOf("erro" to (e.message ?: "Erro ao buscar pacientes"))
+                )
             }
         }
+        //RALATORIO
+        // Função de busca de Sintomas (Refatorada para suportar filtros)
+        fun buscarDadosSintomas(email: String, dataInicio: LocalDateTime?, dataFim: LocalDateTime?): List<ResultRow> {
+            val query = Sintomas.innerJoin(DetalheSintomas)
+                .select { Sintomas.usuarioEmail eq email }
 
+            if (dataInicio != null) query.andWhere { Sintomas.dataRegistro greaterEq dataInicio }
+            if (dataFim != null) query.andWhere { Sintomas.dataRegistro lessEq dataFim }
+
+            return query.toList()
+        }
+
+// Rota de Relatório Detalhado
+        get("/relatorio/detalhado/{email}") {
+            val email = call.parameters["email"] ?: return@get call.respond(HttpStatusCode.BadRequest)
+            val inicioStr = call.request.queryParameters["inicio"]
+            val fimStr = call.request.queryParameters["fim"]
+
+            val relatorio = transaction {
+                // 1. Parsing Seguro de Datas (Retorna null se der erro ou vazio)
+                val dataInicio = inicioStr?.let { try { LocalDateTime.parse(it) } catch (e: Exception) { null } }
+                val dataFim = fimStr?.let { try { LocalDateTime.parse(it) } catch (e: Exception) { null } }
+
+                // 2. Query de Aderência (Filtro Dinâmico)
+                val queryAderencia = (Aderencias innerJoin ItensCuidado innerJoin RotinasCuidados)
+                    .select { RotinasCuidados.usuarioEmail eq email }
+
+                if (dataInicio != null) queryAderencia.andWhere { Aderencias.dataExecucao greaterEq dataInicio }
+                if (dataFim != null) queryAderencia.andWhere { Aderencias.dataExecucao lessEq dataFim }
+
+                val registrosAderencia = queryAderencia.toList()
+
+                // 3. Cálculos de Adesão
+                val totalTomadas = registrosAderencia.count { it[Aderencias.statusConformidade] == true }
+                val totalPrescritas = registrosAderencia.size
+                val taxaAdesao = if (totalPrescritas > 0) (totalTomadas.toDouble() / totalPrescritas) * 100 else 0.0
+
+                // 4. Evolução Temporal
+                val evolucao = registrosAderencia
+                    .groupBy { it[Aderencias.dataExecucao].toLocalDate() }
+                    .map { (data, lista) ->
+                        PontoEvolucaoDTO(
+                            data = data.toString(),
+                            dosesTomadas = lista.count { it[Aderencias.statusConformidade] == true },
+                            dosesEsquecidas = lista.count { it[Aderencias.statusConformidade] == false }
+                        )
+                    }
+
+                // 5. Sintomas e Média (Agora com filtro de datas consistente)
+                val registrosSintomas = buscarDadosSintomas(email, dataInicio, dataFim)
+
+                val media = if (registrosSintomas.isNotEmpty())
+                    registrosSintomas.map { it[Sintomas.valorEvaBemEstar] }.average() else 0.0
+
+                val sintomasFrequentes = registrosSintomas
+                    .groupBy { it[DetalheSintomas.nomeSintoma] }
+                    .map { (nome, lista) -> SintomaFrequenteDTO(nome, lista.size) }
+                    .sortedByDescending { it.contagem }
+                    .take(5)
+
+                // 6. Retorno
+                RelatorioCompletoDTO(media, taxaAdesao, evolucao, sintomasFrequentes)
+            }
+
+            call.respond(relatorio)
+        }
     }
 }
