@@ -897,17 +897,22 @@ fun Application.configureRouting() {
         post("/rotinas") {
             try {
                 val dto = call.receive<CriarRotinaDTO>()
+
                 transaction {
                     RotinasCuidados.insert {
-                        it[usuarioEmail] = dto.emailUsuario
+                        it[usuarioEmail] = dto.emailUsuario.trim().lowercase()
                         it[nomeRotina] = dto.nomeRotina
                         it[dataInicio] = LocalDate.now()
                         it[status] = "ATIVO"
                     }
                 }
+
                 call.respond(HttpStatusCode.Created, RespostaDTO("Rotina criada", true))
+
             } catch (e: Exception) {
-                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro", false))
+                e.printStackTrace()
+
+                call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro: ${e.message}", false))
             }
         }
 
