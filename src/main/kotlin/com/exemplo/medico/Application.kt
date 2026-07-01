@@ -201,6 +201,12 @@ data class PacienteVinculadoDTO(
     val emailPaciente: String
 )
 
+@Serializable
+data class DesativarContaDTO(
+    val email: String,
+    val senha: String
+)
+
 // SERVIDOR
 
 fun main() {
@@ -258,8 +264,12 @@ fun Application.configureRouting() {
                 }
 
                 if (usuarioRow != null) {
-                    val hashSalvoNoBanco = usuarioRow[Usuarios.senha]
+                    if (usuarioRow[Usuarios.ativo] == false) {
+                        call.respond(HttpStatusCode.Forbidden, RespostaDTO("Sua conta está desativada.", false))
+                        return@post
+                    }
 
+                    val hashSalvoNoBanco = usuarioRow[Usuarios.senha]
                     val senhaCorreta = SecurityUtils.verificarSenha(dados.senha, hashSalvoNoBanco)
 
                     if (senhaCorreta) {
@@ -594,31 +604,46 @@ fun Application.configureRouting() {
             }
         }
 
-        delete("/usuario") {
-            val email = call.request.queryParameters["email"]?.trim()?.lowercase()
-            if (email == null) {
-                call.respond(HttpStatusCode.BadRequest, RespostaDTO("Email obrigatório", false))
-                return@delete
-            }
-
+        post("/usuario/desativar") {
             try {
+                val dto = call.receive<DesativarContaDTO>()
+                val emailTratado = dto.email.trim().lowercase()
+
                 transaction {
+                    // Busca o usuario no banco
+                    val usuarioRow = Usuarios.select { Usuarios.email eq emailTratado }.singleOrNull()
 
-                    val deletados = Usuarios.deleteWhere { Usuarios.email eq email }
+                    if (usuarioRow != null) {
+                        // Compara a senha digitada com a senha do banco
+                        val senhaCorreta = SecurityUtils.verificarSenha(dto.senha, usuarioRow[Usuarios.senha])
 
-                    if (deletados > 0) {
-                        println(">>> Usuário $email deletado com sucesso.")
+                        if (senhaCorreta) {
+                            // Atualiza a coluna 'ativo' para false
+                            val atualizados = Usuarios.update({ Usuarios.email eq emailTratado }) {
+                                it[ativo] = false
+                            }
+
+                            if (atualizados > 0) {
+                                println(">>> Usuário $emailTratado desativado com sucesso.")
+                            }
+                        } else {
+                            throw IllegalArgumentException("Senha incorreta.")
+                        }
                     } else {
-                        throw Exception("Usuário não encontrado")
+                        throw Exception("Usuário não encontrado.")
                     }
                 }
-                call.respond(HttpStatusCode.OK, RespostaDTO("Conta deletada permanentemente", true))
 
+                call.respond(HttpStatusCode.OK, RespostaDTO("Conta desativada com sucesso.", true))
+
+            } catch (e: IllegalArgumentException) {
+                // Não autorizado se a senha estiver errada
+                call.respond(HttpStatusCode.Unauthorized, RespostaDTO(e.message ?: "Acesso não autorizado", false))
             } catch (e: Exception) {
                 e.printStackTrace()
                 call.respond(
                     HttpStatusCode.InternalServerError,
-                    RespostaDTO("Erro ao deletar conta: ${e.message}", false)
+                    RespostaDTO("Erro ao desativar conta: ${e.message}", false)
                 )
             }
         }
@@ -983,8 +1008,8 @@ fun Application.configureRouting() {
                 )
             }
         }
-        //RALATORIO
-        // Função de busca de Sintomas (Refatorada para suportar filtros)
+        //RELATORIO
+        // Funcao de busca de Sintomas
         fun buscarDadosSintomas(email: String, dataInicio: LocalDateTime?, dataFim: LocalDateTime?): List<ResultRow> {
             val query = Sintomas.innerJoin(DetalheSintomas)
                 .select { Sintomas.usuarioEmail eq email }
@@ -995,18 +1020,18 @@ fun Application.configureRouting() {
             return query.toList()
         }
 
-// Rota de Relatório Detalhado
+        // Rota de Relatorio Detalhado
         get("/relatorio/detalhado/{email}") {
             val email = call.parameters["email"] ?: return@get call.respond(HttpStatusCode.BadRequest)
             val inicioStr = call.request.queryParameters["inicio"]
             val fimStr = call.request.queryParameters["fim"]
 
             val relatorio = transaction {
-                // 1. Parsing Seguro de Datas (Retorna null se der erro ou vazio)
+                // Datas
                 val dataInicio = inicioStr?.let { try { LocalDateTime.parse(it) } catch (e: Exception) { null } }
                 val dataFim = fimStr?.let { try { LocalDateTime.parse(it) } catch (e: Exception) { null } }
 
-                // 2. Query de Aderência (Filtro Dinâmico)
+                // 2. Query de Aderencia
                 val queryAderencia = (Aderencias innerJoin ItensCuidado innerJoin RotinasCuidados)
                     .select { RotinasCuidados.usuarioEmail eq email }
 
@@ -1015,12 +1040,12 @@ fun Application.configureRouting() {
 
                 val registrosAderencia = queryAderencia.toList()
 
-                // 3. Cálculos de Adesão
+                // 3. Calculos de Adesao
                 val totalTomadas = registrosAderencia.count { it[Aderencias.statusConformidade] == true }
                 val totalPrescritas = registrosAderencia.size
                 val taxaAdesao = if (totalPrescritas > 0) (totalTomadas.toDouble() / totalPrescritas) * 100 else 0.0
 
-                // 4. Evolução Temporal
+                // 4. Evolucao Temporal
                 val evolucao = registrosAderencia
                     .groupBy { it[Aderencias.dataExecucao].toLocalDate() }
                     .map { (data, lista) ->
@@ -1031,7 +1056,7 @@ fun Application.configureRouting() {
                         )
                     }
 
-                // 5. Sintomas e Média (Agora com filtro de datas consistente)
+                // 5. Sintomas e Media
                 val registrosSintomas = buscarDadosSintomas(email, dataInicio, dataFim)
 
                 val media = if (registrosSintomas.isNotEmpty())

@@ -14,6 +14,7 @@ object Usuarios : Table("usuario") {
     val nome = varchar("nome", 100).nullable()
     val telefone = varchar("telefone", 20).nullable()
     val isAcompanhante = bool("is_acompanhante").default(false)
+    val ativo = bool("ativo").default(true)
     val dataCadastro = datetime("data_cadastro").defaultExpression(CurrentDateTime)
 
     override val primaryKey = PrimaryKey(email)
