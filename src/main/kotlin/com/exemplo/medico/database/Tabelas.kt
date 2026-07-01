@@ -65,6 +65,7 @@ object Sintomas : IntIdTable("sintoma", "id_registro") {
     val valorEvaBemEstar = integer("valor_eva_bem_estar")
     val valorEvaSintomas = integer("valor_eva_sintomas")
     val alertaRisco = bool("alerta_risco").default(false)
+    val registradoPorEmail = varchar("registrado_por_email", 255) references Usuarios.email
 }
 
 // Tabela de Detalhes
@@ -81,6 +82,7 @@ object Aderencias : Table("aderencia") {
     val dataExecucao = datetime("data_execucao").defaultExpression(CurrentDateTime)
     val doseRealizada = varchar("dose_realizada", 50).nullable()
     val statusConformidade = bool("status_conformidade").nullable()
+    val executadoPorEmail = varchar("executado_por_email", 255) references Usuarios.email
 
     override val primaryKey = PrimaryKey(idAderencia)
 }
