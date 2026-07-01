@@ -13,7 +13,7 @@ repositories {
 }
 
 dependencies {
-    // Definições de versões manuais para evitar erros
+    // Definicoes de versoes fixas
     val ktor_version = "2.3.9"
     val logback_version = "1.4.14"
     val exposed_version = "0.41.1"
@@ -34,6 +34,7 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-java-time:$exposed_version")
     implementation("org.postgresql:postgresql:$postgres_version")
     implementation("com.zaxxer:HikariCP:$hikari_version")
+    implementation("at.favre.lib:bcrypt:0.10.2")
 }
 
 application {
@@ -41,7 +42,7 @@ application {
     mainClass.set("com.exemplo.medico.ApplicationKt")
 }
 
-// Configuração para garantir compatibilidade do Kotlin
+// Configuracao para garantir compatibilidade do Kotlin
 kotlin {
     jvmToolchain(17) // Garante que use Java 17 (padrão atual)
 }

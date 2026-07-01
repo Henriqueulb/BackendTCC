@@ -221,7 +221,7 @@ fun Application.module() {
 fun initDatabase() {
     try {
         val config = HikariConfig().apply {
-            jdbcUrl = "jdbc:postgresql://localhost:5433/postgres"
+            jdbcUrl = "jdbc:postgresql://localhost:5432/postgres"
             driverClassName = "org.postgresql.Driver"
             username = "postgres"
             password = "admin"
@@ -254,15 +254,22 @@ fun Application.configureRouting() {
                 val emailTratado = dados.email.trim().lowercase()
 
                 val usuarioRow = transaction {
-                    Usuarios.select { (Usuarios.email eq emailTratado) and (Usuarios.senha eq dados.senha) }
-                        .firstOrNull()
+                    Usuarios.select { Usuarios.email eq emailTratado }.firstOrNull()
                 }
 
                 if (usuarioRow != null) {
-                    val nome = usuarioRow[Usuarios.nome] ?: "Usuário"
+                    val hashSalvoNoBanco = usuarioRow[Usuarios.senha]
 
-                    val isAcomp = usuarioRow[Usuarios.isAcompanhante]
-                    call.respond(HttpStatusCode.OK, RespostaDTO("Sucesso", true, nome, isAcomp))
+                    val senhaCorreta = SecurityUtils.verificarSenha(dados.senha, hashSalvoNoBanco)
+
+                    if (senhaCorreta) {
+                        val nome = usuarioRow[Usuarios.nome] ?: "Usuário"
+                        val isAcomp = usuarioRow[Usuarios.isAcompanhante]
+
+                        call.respond(HttpStatusCode.OK, RespostaDTO("Sucesso", true, nome, isAcomp))
+                    } else {
+                        call.respond(HttpStatusCode.Unauthorized, RespostaDTO("Login inválido", false))
+                    }
                 } else {
                     call.respond(HttpStatusCode.Unauthorized, RespostaDTO("Login inválido", false))
                 }
@@ -276,6 +283,7 @@ fun Application.configureRouting() {
             try {
                 val dados = call.receive<CadastroUsuarioDTO>()
                 val emailT = dados.email.trim().lowercase()
+                val senhaSegura = SecurityUtils.hashSenha(dados.senha)
 
                 transaction {
                     if (Usuarios.select { Usuarios.email eq emailT }.count() > 0)
@@ -284,7 +292,7 @@ fun Application.configureRouting() {
                     Usuarios.insert {
                         it[nome] = dados.nome
                         it[email] = emailT
-                        it[senha] = dados.senha
+                        it[senha] = senhaSegura
                         it[telefone] = dados.telefone
                         it[isAcompanhante] = dados.isAcompanhante
                     }
@@ -424,6 +432,11 @@ fun Application.configureRouting() {
             try {
                 val dto = call.receive<StatusRotinaDTO>()
                 val dataBase = LocalDate.parse(dto.data)
+                val emailLogado = call.request.headers["X-User-Email"]
+                    ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        RespostaDTO("Identificação do autor ausente.", false)
+                    )
 
                 transaction<Unit> {
                     val inicioDia = dataBase.atStartOfDay()
@@ -445,6 +458,7 @@ fun Application.configureRouting() {
                             it[dataExecucao] = LocalDateTime.of(dataBase, LocalTime.now())
                             it[statusConformidade] = true
                             it[doseRealizada] = doseOrig
+                            it[executadoPorEmail] = emailLogado
                         }
                     }
                 }
@@ -472,21 +486,26 @@ fun Application.configureRouting() {
             try {
                 val dto = call.receive<NovoSintomaDTO>()
 
-                // 1. Calcula o risco: se QUALQUER sintoma for >= 7 ou bem estar <= 3
                 val temSintomaGrave = dto.sintomas.any { it.intensidade >= 7 }
                 val riscoCalculado = temSintomaGrave || (dto.bemEstar <= 3)
 
+                val emailLogado = call.request.headers["X-User-Email"]
+                    ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        RespostaDTO("Identificação do autor ausente.", false)
+                    )
+
                 transaction {
-                    // 2. Insere na tabela principal (Sintomas)
-                    // Usamos .insertAndGetId para pegar o ID do registro gerado
+                    // Insere na tabela Sintomas
                     val idGerado = Sintomas.insertAndGetId {
                         it[usuarioEmail] = dto.emailUsuario
                         it[valorEvaBemEstar] = dto.bemEstar
                         it[valorEvaSintomas] = dto.sintomas.maxOfOrNull { s -> s.intensidade } ?: 0
                         it[alertaRisco] = riscoCalculado
+                        it[registradoPorEmail] = emailLogado
                     }
 
-                    // 3. Insere cada item da lista na nova tabela DetalheSintomas
+                    // Insere cada item da lista na tabela DetalheSintomas
                     dto.sintomas.forEach { sintoma ->
                         DetalheSintomas.insert {
                             it[registroSintomaId] = idGerado.value
@@ -549,6 +568,7 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.InternalServerError, RespostaDTO("Erro ao atualizar", false))
             }
         }
+
         put("/usuario/senha") {
             try {
                 val dto = call.receive<TrocarSenhaDTO>()
@@ -558,9 +578,13 @@ fun Application.configureRouting() {
                     return@put
                 }
 
+                // Aplica o hash
+                val senhaSegura = SecurityUtils.hashSenha(dto.novaSenha)
+
                 transaction {
                     Usuarios.update({ Usuarios.email eq dto.email }) {
-                        it[senha] = dto.novaSenha
+                        // Salva o hash gerado
+                        it[senha] = senhaSegura
                     }
                 }
                 call.respond(HttpStatusCode.OK, RespostaDTO("Senha alterada com sucesso", true))
