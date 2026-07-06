@@ -15,7 +15,6 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import io.ktor.http.invoke
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -25,12 +24,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.select
 
-// import org.jetbrains.exposed.sql.functions.count
-// import org.jetbrains.exposed.sql.SqlExpressionBuilder.count
-
-
 // DTOs
-
 @Serializable
 data class CadastroUsuarioDTO(
     val nome: String,
@@ -986,7 +980,6 @@ fun Application.configureRouting() {
 
             try {
                 val pacientes = transaction {
-                    // Faz o Join explícito: Acompanhantes.usuario_paciente_email = Usuarios.email
                     Acompanhantes.join(
                         otherTable = Usuarios,
                         joinType = org.jetbrains.exposed.sql.JoinType.INNER,
