@@ -9,7 +9,7 @@ docker run --name postgres-tcc -e POSTGRES_PASSWORD=admin -p 5432:5432 -d postgr
 
 2. Rodar o Backend
 Navegue até a pasta do backend:
-cd henriqueulb/backendpoc-tcc/backendPOC-TCC-4edb4319759f7281a6f0eb202ae56ec551823050
+cd seudiretorio/backendTCC/backendTCC
 
 Execute o servidor via Gradle:
 gradlew.bat run
@@ -21,7 +21,7 @@ O servidor estará rodando em localhost:8080.
 3. Rodar o Aplicativo Mobile
 Abra o Android Studio.
 
-Selecione Open e navegue até a pasta do projeto mobile: henriqueulb/healthcarepoc-tcc/HealthCarePOC-TCC-9808031d1027845da6c4f4270c9d1fc5010852fd
+Selecione Open e navegue até a pasta do projeto mobile: seudiretorio/healthcareTCC/HealthCareTCC
 
 Aguarde a sincronização do Gradle.
 
